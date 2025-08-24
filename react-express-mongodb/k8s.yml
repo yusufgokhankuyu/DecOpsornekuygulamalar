@@ -1,0 +1,155 @@
+# =========================
+# Namespace
+# =========================
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: demo-stack
+
+---
+# =========================
+# MongoDB (StatefulSet + PVC + Service)
+# =========================
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongo
+  namespace: demo-stack
+spec:
+  selector:
+    app: mongo
+  ports:
+    - name: mongo
+      port: 27017
+      targetPort: 27017
+  clusterIP: None  # headless (StatefulSet DNS için)
+
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mongo
+  namespace: demo-stack
+spec:
+  serviceName: mongo
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mongo
+  template:
+    metadata:
+      labels:
+        app: mongo
+    spec:
+      containers:
+        - name: mongo
+          image: mongo:4.2.0
+          ports:
+            - containerPort: 27017
+          volumeMounts:
+            - name: mongo-data
+              mountPath: /data/db
+  volumeClaimTemplates:
+    - metadata:
+        name: mongo-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi
+
+---
+# =========================
+# Backend (Deployment + Service)
+# =========================
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+  namespace: demo-stack
+spec:
+  selector:
+    app: backend
+  ports:
+    - name: http
+      port: 3000
+      targetPort: 3000
+  type: ClusterIP
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: demo-stack
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      containers:
+        - name: backend
+          image: my-backend:local
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 3000
+          env:
+            # Backend'in Mongo'ya bağlanması için tipik URI
+            - name: MONGO_URL
+              value: mongodb://mongo.demo-stack.svc.cluster.local:27017/mydb
+          # Gerekirse:
+          # env:
+          #   - name: NODE_ENV
+          #     value: production
+          #   - name: PORT
+          #     value: "3000"
+
+---
+# =========================
+# Frontend (Deployment + Service)
+# Not: Frontend backend'e "http://backend:3000" (aynı namespace) adresiyle gider.
+# =========================
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  namespace: demo-stack
+spec:
+  selector:
+    app: frontend
+  ports:
+    - name: http
+      port: 3000
+      targetPort: 3000
+      nodePort: 30080
+  type: NodePort
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: demo-stack
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: frontend
+  template:
+    metadata:
+      labels:
+        app: frontend
+    spec:
+      containers:
+        - name: frontend
+          image: my-frontend:local
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 3000
+          # React app backend URL'i için env ya da .env.production kullanılabilir.
+          # Örn build-time env gerektiriyorsa image'ı o şekilde build et.
